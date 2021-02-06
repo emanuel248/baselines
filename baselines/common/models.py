@@ -15,7 +15,6 @@ def nature_cnn(input_shape, **conv_kwargs):
     """
     CNN from Nature paper.
     """
-    print('input shape is {}'.format(input_shape))
     x_input = tf.keras.Input(shape=input_shape, dtype=tf.uint8)
     h = x_input
     h = tf.cast(h, tf.float32) / 255.
@@ -48,7 +47,6 @@ def mlp(num_layers=2, num_hidden=64, activation=tf.tanh):
     function that builds fully connected network with a given input tensor / placeholder
     """
     def network_fn(input_shape):
-        print('input shape is {}'.format(input_shape))
         x_input = tf.keras.Input(shape=input_shape)
         # h = tf.keras.layers.Flatten(x_input)
         h = x_input
@@ -61,6 +59,23 @@ def mlp(num_layers=2, num_hidden=64, activation=tf.tanh):
 
     return network_fn
 
+@register("lnlstm")
+def lnlstm(mlp_dim = [64, 64], activation=tf.tanh, **lstm_kwargs):
+    def network_fn(input_shape):
+        x_input = tf.keras.Input(shape=input_shape)
+        h = x_input
+        for i, num_hidden in enumerate(mlp_dim):
+          h = tf.keras.layers.Dense(units=num_hidden, kernel_initializer=ortho_init(np.sqrt(2)),
+                                    name='mlp_fc{}'.format(i), activation=activation)(h)
+        h = tf.keras.models.Sequential([
+            # Shape [batch, time, features] => [batch, time, lstm_units]
+            tf.keras.layers.LSTM(32, return_sequences=True),
+            # Shape => [batch, time, features]
+            tf.keras.layers.Dense(units=1)
+        ])(h)
+
+        return tf.keras.Model(inputs=[x_input], outputs=[h])
+    return network_fn
 
 @register("cnn")
 def cnn(**conv_kwargs):
@@ -81,7 +96,6 @@ def conv_only(convs=[(32, 8, 4), (64, 4, 2), (64, 3, 1)], **conv_kwargs):
     '''
 
     def network_fn(input_shape):
-        print('input shape is {}'.format(input_shape))
         x_input = tf.keras.Input(shape=input_shape, dtype=tf.uint8)
         h = x_input
         h = tf.cast(h, tf.float32) / 255.
