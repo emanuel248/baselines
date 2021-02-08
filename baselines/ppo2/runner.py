@@ -2,6 +2,7 @@ import numpy as np
 import tensorflow as tf
 from baselines.common.runners import AbstractEnvRunner
 
+
 class Runner(AbstractEnvRunner):
     """
     We use this object to make a mini batch of experiences
@@ -11,16 +12,18 @@ class Runner(AbstractEnvRunner):
     run():
     - Make a mini batch
     """
-    def __init__(self, *, env, model, nsteps, gamma, lam):
+
+    def __init__(self, *, env, model, nsteps, gamma, lam, states=None):
         super().__init__(env=env, model=model, nsteps=nsteps)
         # Lambda used in GAE (General Advantage Estimation)
         self.lam = lam
         # Discount rate
         self.gamma = gamma
+        self.states = states
 
     def run(self):
         # Here, we init the lists that will contain the mb of experiences
-        mb_obs, mb_rewards, mb_actions, mb_values, mb_dones, mb_neglogpacs = [],[],[],[],[],[]
+        mb_obs, mb_rewards, mb_actions, mb_values, mb_dones, mb_neglogpacs = [], [], [], [], [], []
         mb_states = self.states
         epinfos = []
         # For n in range number of steps
@@ -28,7 +31,7 @@ class Runner(AbstractEnvRunner):
             # Given observations, get action value and neglopacs
             # We already have self.obs because Runner superclass run self.obs[:] = env.reset() on init
             obs = tf.constant(self.obs)
-            actions, values, self.states, neglogpacs = self.model.step(obs)
+            actions, values, _, neglogpacs = self.model.step(obs)
             actions = actions._numpy()
             mb_obs.append(self.obs.copy())
             mb_actions.append(actions)
@@ -39,12 +42,14 @@ class Runner(AbstractEnvRunner):
             # Take actions in env and look the results
             # Infos contains a ton of useful informations
             self.obs[:], rewards, self.dones, infos = self.env.step(actions)
+            if mb_states is not None:
+                mb_states.append(self.obs)
             for info in infos:
                 maybeepinfo = info.get('episode')
                 if maybeepinfo: epinfos.append(maybeepinfo)
             mb_rewards.append(rewards)
 
-        #batch of steps to batch of rollouts
+        # batch of steps to batch of rollouts
         mb_obs = np.asarray(mb_obs, dtype=self.obs.dtype)
         mb_rewards = np.asarray(mb_rewards, dtype=np.float32)
         mb_actions = np.asarray(mb_actions)
@@ -62,13 +67,13 @@ class Runner(AbstractEnvRunner):
                 nextnonterminal = 1.0 - self.dones
                 nextvalues = last_values
             else:
-                nextnonterminal = 1.0 - mb_dones[t+1]
-                nextvalues = mb_values[t+1]
-            delta = mb_rewards[t] + self.gamma * nextvalues * nextnonterminal - mb_values[t]
+                nextnonterminal = 1.0 - mb_dones[t + 1]
+                nextvalues = mb_values[t + 1]
+            delta = mb_rewards[t] + self.gamma * nextvalues.flatten() * nextnonterminal - mb_values[t].flatten()
             mb_advs[t] = lastgaelam = delta + self.gamma * self.lam * nextnonterminal * lastgaelam
-        mb_returns = mb_advs + mb_values
-        return (*map(sf01, (mb_obs, mb_returns, mb_dones, mb_actions, mb_values, mb_neglogpacs)),
-            mb_states, epinfos)
+        mb_returns = mb_advs + np.squeeze(mb_values)
+        return (*map(sf01, (mb_obs, mb_returns, mb_dones, mb_actions, np.squeeze(mb_values), mb_neglogpacs)),
+                mb_states, epinfos)
 
 
 def sf01(arr):

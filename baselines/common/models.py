@@ -62,14 +62,18 @@ def mlp(num_layers=2, num_hidden=64, activation=tf.tanh):
 @register("lnlstm")
 def lnlstm(mlp_dim = [64, 64], activation=tf.tanh, **lstm_kwargs):
     def network_fn(input_shape):
+        print('input shape', input_shape)
         x_input = tf.keras.Input(shape=input_shape)
         h = x_input
         for i, num_hidden in enumerate(mlp_dim):
           h = tf.keras.layers.Dense(units=num_hidden, kernel_initializer=ortho_init(np.sqrt(2)),
                                     name='mlp_fc{}'.format(i), activation=activation)(h)
+        print('h',h.shape)
         h = tf.keras.models.Sequential([
             # Shape [batch, time, features] => [batch, time, lstm_units]
-            tf.keras.layers.LSTM(32, return_sequences=True),
+            tf.keras.layers.LSTM(256, return_sequences=True),
+            tf.keras.layers.Dropout(0.2),
+            tf.keras.layers.BatchNormalization(),
             # Shape => [batch, time, features]
             tf.keras.layers.Dense(units=1)
         ])(h)
