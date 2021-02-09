@@ -145,7 +145,6 @@ def learn(*, network, env, total_timesteps, eval_env=None, seed=None, nsteps=204
         # Calculate the learning rate
         lrnow = lr(frac)
         cliprangenow = cliprange(frac)
-        batchsize = nbatch // nminibatches
 
         if update % log_interval == 0 and is_mpi_root: logger.info('Stepping environment...')
 
@@ -174,23 +173,19 @@ def learn(*, network, env, total_timesteps, eval_env=None, seed=None, nsteps=204
                     slices = (tf.constant(arr[mbinds]) for arr in (obs, returns, masks, actions, values, neglogpacs))
                     mblossvals.append(model.train(lrnow, cliprangenow, *slices))
         else:  # recurrent version
-            # assholes !!
-            update_fac = max(nbatch // nminibatches // noptepochs // nsteps, 1)
             assert nenvs % nminibatches == 0
-            env_indices = np.arange(nenvs)
-            flat_indices = np.arange(nenvs * nsteps).reshape(nenvs, nsteps)
-            envs_per_batch = batchsize // nsteps
-            for epoch_num in range(noptepochs):
-                np.random.shuffle(env_indices)
-                for start in range(0, nenvs, envs_per_batch):
-                    timestep = num_timesteps // update_fac + ((epoch_num *
-                                                               nenvs + start) // envs_per_batch)
-                    end = start + envs_per_batch
-                    mb_env_inds = env_indices[start:end]
-                    mb_flat_inds = flat_indices[mb_env_inds].ravel()
-                    slices = (arr[mb_flat_inds] for arr in (obs, returns, masks, actions, values, neglogpacs))
-                    mb_states = states[:, mb_env_inds]
-                    mblossvals.append(model.train(lrnow, cliprangenow, *slices, states=mb_states))
+            envsperbatch = nenvs // nminibatches
+            envinds = np.arange(nenvs)
+            flatinds = np.arange(nenvs * nsteps).reshape(nenvs, nsteps)
+            for _ in range(noptepochs):
+                np.random.shuffle(envinds)
+                for start in range(0, nenvs, envsperbatch):
+                    end = start + envsperbatch
+                    mbenvinds = envinds[start:end]
+                    mbflatinds = flatinds[mbenvinds].ravel()
+                    slices = (arr[mbflatinds] for arr in (obs, returns, masks, actions, values, neglogpacs))
+                    mbstates = states[mbenvinds]
+                    mblossvals.append(model.train(lrnow, cliprangenow, *slices, mbstates))
 
             # raise ValueError('Not Support Yet')
 
