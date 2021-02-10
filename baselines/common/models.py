@@ -1,8 +1,10 @@
 import numpy as np
 import tensorflow as tf
-from baselines.a2c.utils import ortho_init, conv
+from baselines.a2c.utils import ortho_init, \
+    conv, batch_to_seq, seq_to_batch, lnlstm, lstm
 
 mapping = {}
+
 
 def register(name):
     def _thunk(func):
@@ -26,6 +28,7 @@ def nature_cnn(input_shape, **conv_kwargs):
                                name='fc1', activation='relu')(h3)
     network = tf.keras.Model(inputs=[x_input], outputs=[h3])
     return network
+
 
 @register("mlp")
 def mlp(num_layers=2, num_hidden=64, activation=tf.tanh):
@@ -59,27 +62,66 @@ def mlp(num_layers=2, num_hidden=64, activation=tf.tanh):
 
     return network_fn
 
-@register("lnlstm")
-def lnlstm(mlp_dim = [64, 64], activation=tf.tanh, **lstm_kwargs):
-    def network_fn(input_shape):
-        print('input shape', input_shape)
-        x_input = tf.keras.Input(shape=input_shape)
-        h = x_input
-        for i, num_hidden in enumerate(mlp_dim):
-          h = tf.keras.layers.Dense(units=num_hidden, kernel_initializer=ortho_init(np.sqrt(2)),
-                                    name='mlp_fc{}'.format(i), activation=activation)(h)
-        print('h',h.shape)
-        h = tf.keras.models.Sequential([
-            # Shape [batch, time, features] => [batch, time, lstm_units]
-            tf.keras.layers.LSTM(256, return_sequences=True),
-            tf.keras.layers.Dropout(0.2),
-            tf.keras.layers.BatchNormalization(),
-            # Shape => [batch, time, features]
-            tf.keras.layers.Dense(units=1)
-        ])(h)
 
-        return tf.keras.Model(inputs=[x_input], outputs=[h])
+@register("lstm")
+def lstm(nlstm=128, layer_norm=False):
+    """
+    Builds LSTM (Long-Short Term Memory) network to be used in a policy.
+    Note that the resulting function returns not only the output of the LSTM
+    (i.e. hidden state of lstm for each step in the sequence), but also a dictionary
+    with auxiliary tensconv_fnors to be set as policy attributes.
+
+    Specifically,
+        S is a placeholder to feed current state (LSTM state has to be managed outside policy)
+        M is a placeholder for the mask (used to mask out observations after the end of the episode, but can be used for other purposes too)
+        initial_state is a numpy array containing initial lstm state (usually zeros)
+        state is the output LSTM state (to be fed into S at the next call)
+
+
+    An example of usage of lstm-based policy can be found here: common/tests/test_doc_examples.py/test_lstm_example
+
+    Parameters:
+    ----------
+
+    nlstm: int          LSTM hidden state size
+
+    layer_norm: bool    if True, layer-normalized version of LSTM is used
+
+    Returns:
+    -------
+
+    function that builds LSTM with a given input tensor / placeholder
+    """
+
+    def network_fn(X, nenv=1):
+        nbatch = X.shape[0]
+        nsteps = nbatch // nenv
+
+        h = tf.layers.flatten(X)
+
+        M = tf.placeholder(tf.float32, [nbatch]) #mask (done t-1)
+        S = tf.placeholder(tf.float32, [nenv, 2*nlstm]) #states
+
+        xs = batch_to_seq(h, nenv, nsteps)
+        ms = batch_to_seq(M, nenv, nsteps)
+
+        if layer_norm:
+            h5, snew = lnlstm(xs, ms, S, scope='lnlstm', nh=nlstm)
+        else:
+            h5, snew = lstm(xs, ms, S, scope='lstm', nh=nlstm)
+
+        h = seq_to_batch(h5)
+        initial_state = np.zeros(S.shape.as_list(), dtype=float)
+
+        return h, {'S':S, 'M':M, 'state':snew, 'initial_state':initial_state}
+
     return network_fn
+
+
+@register("lnlstm")
+def lnlstm(nlstm=128):
+    return lstm(nlstm=nlstm, layer_norm=True)
+
 
 @register("cnn")
 def cnn(**conv_kwargs):
