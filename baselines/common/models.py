@@ -64,7 +64,7 @@ def mlp(num_layers=2, num_hidden=64, activation=tf.tanh):
 
 
 @register("lstm")
-def lstm(nlstm=128, layer_norm=False):
+def lstm(num_extractor_layers=32, num_hidden=64, obs_length=128, activation=tf.tanh):
     """
     Builds LSTM (Long-Short Term Memory) network to be used in a policy.
     Note that the resulting function returns not only the output of the LSTM
@@ -94,26 +94,17 @@ def lstm(nlstm=128, layer_norm=False):
     """
 
     def network_fn(X, nenv=1):
-        nbatch = X.shape[0]
-        nsteps = nbatch // nenv
+        def network_fn(input_shape):
+            x_input = tf.keras.Input(shape=input_shape)
+            # h = tf.keras.layers.Flatten(x_input)
+            h = x_input
+            for i in range(num_extractor_layers):
+                h = tf.keras.layers.Dense(units=num_hidden, kernel_initializer=ortho_init(np.sqrt(2)),
+                                          name='mlp_fc{}'.format(i), activation=activation)(h)
+            h = tf.keras.layers.LSTM(obs_length)
 
-        h = tf.layers.flatten(X)
-
-        M = tf.placeholder(tf.float32, [nbatch]) #mask (done t-1)
-        S = tf.placeholder(tf.float32, [nenv, 2*nlstm]) #states
-
-        xs = batch_to_seq(h, nenv, nsteps)
-        ms = batch_to_seq(M, nenv, nsteps)
-
-        if layer_norm:
-            h5, snew = lnlstm(xs, ms, S, scope='lnlstm', nh=nlstm)
-        else:
-            h5, snew = lstm(xs, ms, S, scope='lstm', nh=nlstm)
-
-        h = seq_to_batch(h5)
-        initial_state = np.zeros(S.shape.as_list(), dtype=float)
-
-        return h, {'S':S, 'M':M, 'state':snew, 'initial_state':initial_state}
+            network = tf.keras.Model(inputs=[x_input], outputs=[h])
+            return network
 
     return network_fn
 

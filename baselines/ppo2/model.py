@@ -38,7 +38,7 @@ class Model(tf.Module):
         if MPI is not None:
           sync_from_root(self.variables)
 
-    def train(self, lr, cliprange, obs, returns, masks, actions, values, neglogpac_old, states=None):
+    def train(self, lr, cliprange, obs, returns, masks, actions, values, neglogpac_old):
         grads, pg_loss, vf_loss, entropy, approxkl, clipfrac = self.get_grad(
             cliprange, obs, returns, masks, actions, values, neglogpac_old)
         if MPI is not None:

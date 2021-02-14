@@ -182,12 +182,10 @@ def learn(*, network, env, total_timesteps, eval_env=None, seed=None, nsteps=204
                 for start in range(0, nenvs, envsperbatch):
                     end = start + envsperbatch
                     mbenvinds = envinds[start:end]
-                    mbflatinds = flatinds[mbenvinds].ravel()
+                    mbflatinds = flatinds[mbenvinds].flatten()
                     slices = (arr[mbflatinds] for arr in (obs, returns, masks, actions, values, neglogpacs))
                     mbstates = states[mbenvinds]
                     mblossvals.append(model.train(lrnow, cliprangenow, *slices, mbstates))
-
-            # raise ValueError('Not Support Yet')
 
         # Feedforward --> get losses --> update
         lossvals = np.mean(mblossvals, axis=0)
