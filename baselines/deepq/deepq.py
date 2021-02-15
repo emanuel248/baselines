@@ -31,7 +31,7 @@ class ActWrapper(object):
         with open(path, "rb") as f:
             model_data, act_params = cloudpickle.load(f)
         act = deepq.build_act(**act_params)
-        sess = tf.Session()
+        sess = tf.compat.v1.Session()
         sess.__enter__()
         with tempfile.TemporaryDirectory() as td:
             arc_path = os.path.join(td, "packed.zip")
@@ -202,7 +202,7 @@ def learn(env,
         make_obs_ph=make_obs_ph,
         q_func=q_func,
         num_actions=env.action_space.n,
-        optimizer=tf.train.AdamOptimizer(learning_rate=lr),
+        optimizer=tf.compat.v1.train.AdamOptimizer(learning_rate=lr),
         gamma=gamma,
         grad_norm_clipping=10,
         param_noise=param_noise

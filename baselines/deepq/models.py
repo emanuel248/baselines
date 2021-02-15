@@ -8,7 +8,7 @@ def build_q_func(network, hiddens=[256], dueling=True, layer_norm=False, **netwo
         network = get_network_builder(network)(**network_kwargs)
 
     def q_func_builder(input_placeholder, num_actions, scope, reuse=False):
-        with tf.variable_scope(scope, reuse=reuse):
+        with tf.compat.v1.variable_scope(scope, reuse=reuse):
             latent = network(input_placeholder)
             if isinstance(latent, tuple):
                 if latent[1] is not None:
@@ -17,7 +17,7 @@ def build_q_func(network, hiddens=[256], dueling=True, layer_norm=False, **netwo
 
             latent = layers.flatten(latent)
 
-            with tf.variable_scope("action_value"):
+            with tf.compat.v1.variable_scope("action_value"):
                 action_out = latent
                 for hidden in hiddens:
                     action_out = layers.fully_connected(action_out, num_outputs=hidden, activation_fn=None)
@@ -27,7 +27,7 @@ def build_q_func(network, hiddens=[256], dueling=True, layer_norm=False, **netwo
                 action_scores = layers.fully_connected(action_out, num_outputs=num_actions, activation_fn=None)
 
             if dueling:
-                with tf.variable_scope("state_value"):
+                with tf.compat.v1.variable_scope("state_value"):
                     state_out = latent
                     for hidden in hiddens:
                         state_out = layers.fully_connected(state_out, num_outputs=hidden, activation_fn=None)
@@ -35,7 +35,7 @@ def build_q_func(network, hiddens=[256], dueling=True, layer_norm=False, **netwo
                             state_out = layers.layer_norm(state_out, center=True, scale=True)
                         state_out = tf.nn.relu(state_out)
                     state_score = layers.fully_connected(state_out, num_outputs=1, activation_fn=None)
-                action_scores_mean = tf.reduce_mean(action_scores, 1)
+                action_scores_mean = tf.reduce_mean(input_tensor=action_scores, axis=1)
                 action_scores_centered = action_scores - tf.expand_dims(action_scores_mean, 1)
                 q_out = state_score + action_scores_centered
             else:
