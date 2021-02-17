@@ -130,7 +130,24 @@ class Model(object):
         if MPI is not None:
             sync_from_root(sess, global_variables, comm=comm) #pylint: disable=E1101
 
-    def train(self, lr, cliprange, obs, returns, masks, actions, values, neglogpacs, states=None):
+    def forward(self, train_model, policy, ent_coef, vf_coef, lr, cliprange, obs, returns,nbatch_act, nbatch_train,
+                nsteps, masks, actions, values, neglogpacs, states=None, comm=None, mpi_rank_weight=1, microbatch_size=None):
+
+        if MPI is not None and comm is None:
+            comm = MPI.COMM_WORLD
+
+        sess = None
+        with tf.compat.v1.variable_scope('ppo2_model', reuse=tf.compat.v1.AUTO_REUSE):
+            # CREATE OUR TWO MODELS
+            # act_model that is used for sampling
+            act_model = policy(nbatch_act, 1, sess)
+
+            # Train model for training
+            if microbatch_size is None:
+                train_model = policy(nbatch_train, nsteps, sess)
+            else:
+                train_model = policy(microbatch_size, nsteps, sess)
+
         # Here we calculate advantage A(s,a) = R + yV(s') - V(s)
         # Returns = R + yV(s')
         advs = returns - values
@@ -138,16 +155,55 @@ class Model(object):
         # Normalize the advantages
         advs = (advs - advs.mean()) / (advs.std() + 1e-8)
 
-        td_map = {
-            self.train_model.X : obs,
-            self.A : actions,
-            self.ADV : advs,
-            self.R : returns,
-            self.LR : lr,
-            self.CLIPRANGE : cliprange,
-            self.OLDNEGLOGPAC : neglogpacs,
-            self.OLDVPRED : values
-        }
+        neglogpac = train_model.pd.neglogp(actions)
+
+        # Calculate the entropy
+        # Entropy is used to improve exploration by limiting the premature convergence to suboptimal policy.
+        entropy = tf.reduce_mean(input_tensor=train_model.pd.entropy())
+
+        # CALCULATE THE LOSS
+        # Total loss = Policy gradient loss - entropy * entropy coefficient + Value coefficient * value loss
+
+        # Clip the value to reduce variability during Critic training
+        # Get the predicted value
+        vpred = train_model.vf
+        vpredclipped = values + tf.clip_by_value(train_model.vf - values, - cliprange, cliprange)
+        # Unclipped value
+        vf_losses1 = tf.square(vpred - returns)
+        # Clipped value
+        vf_losses2 = tf.square(vpredclipped - returns)
+
+        vf_loss = .5 * tf.reduce_mean(input_tensor=tf.maximum(vf_losses1, vf_losses2))
+
+        # Calculate ratio (pi current policy / pi old policy)
+        ratio = tf.exp(neglogpacs - neglogpac)
+
+        # Defining Loss = - J is equivalent to max J
+        pg_losses = -advs * ratio
+
+        pg_losses2 = -advs * tf.clip_by_value(ratio, 1.0 - cliprange, 1.0 + cliprange)
+
+        # Final PG loss
+        pg_loss = tf.reduce_mean(input_tensor=tf.maximum(pg_losses, pg_losses2))
+        approxkl = .5 * tf.reduce_mean(input_tensor=tf.square(neglogpac - neglogpacs))
+        clipfrac = tf.reduce_mean(input_tensor=tf.cast(tf.greater(tf.abs(ratio - 1.0), cliprange), dtype=tf.float32))
+
+        # Total loss
+        loss = pg_loss - entropy * ent_coef + vf_loss * vf_coef
+
+        # UPDATE THE PARAMETERS USING LOSS
+        # 1. Get the model parameters
+        params = tf.compat.v1.trainable_variables('ppo2_model')
+        # 2. Build our trainer
+        if comm is not None and comm.Get_size() > 1:
+            self.trainer = MpiAdamOptimizer(comm, learning_rate=lr, mpi_rank_weight=mpi_rank_weight, epsilon=1e-5)
+        else:
+            self.trainer = tf.compat.v1.train.AdamOptimizer(learning_rate=lr, epsilon=1e-5)
+        # 3. Calculate the gradients
+        grads_and_var = self.trainer.compute_gradients(loss, params)
+        grads, var = zip(*grads_and_var)
+
+    def train(self, lr, cliprange, obs, returns, masks, actions, values, neglogpacs, states=None):
         if states is not None:
             td_map[self.train_model.S] = states
             td_map[self.train_model.M] = masks
